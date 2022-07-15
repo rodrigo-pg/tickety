@@ -6,7 +6,9 @@ import { NFT } from "../typechain/NFT";
 import { 
   TOKEN_URI, 
   TICKET_QUANTITY, 
-  EVENT_FINAL_TIME
+  EVENT_FINAL_TIME,
+  EVENT_NAME,
+  EVENT_DESCRIPTION
 } from "../utils/constants";
 
 describe("NFT", function () {
@@ -46,7 +48,7 @@ describe("Market", function () {
   })
 
   it("Should create ticket market", async function () {
-    const tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    const tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     expect(await nft.ownerOf(10)).to.equal(marketplace.address);
@@ -55,7 +57,7 @@ describe("Market", function () {
   it("Should buy ticket", async function () {
     const [owner, addr1] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
@@ -68,7 +70,7 @@ describe("Market", function () {
   it("Should resell a ticket", async function () {
     const [owner, addr1, addr2] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
@@ -89,7 +91,7 @@ describe("Market", function () {
   it("Should not resell an used ticket", async function () {
     const [owner, addr1, addr2] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
@@ -107,7 +109,7 @@ describe("Market", function () {
   it("Should not resell a not owned ticket", async function () {
     const [owner, addr1, addr2] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
@@ -120,7 +122,7 @@ describe("Market", function () {
   });
 
   it("Should not use an unbought ticket", async function () {
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     await expect(marketplace.useTicket(1)).to.be.revertedWith("Ticket not bought yet");
@@ -129,7 +131,7 @@ describe("Market", function () {
   it("Ticket should not be used by third parties", async function () {
     const [owner, addr1, addr2] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
@@ -141,7 +143,7 @@ describe("Market", function () {
   it("Should not use an already used ticket", async function () {
     const [owner, addr1] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
@@ -156,12 +158,55 @@ describe("Market", function () {
   it("Should cancel ticket market", async function () {
     const [owner] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
     await tx.wait();
 
     tx = await marketplace.cancelTicketMarket(1, 10);
     await tx.wait();
 
     expect(await nft.ownerOf(10)).to.equal(owner.address);
+  });
+
+  it("Should get event tickets", async function () {
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
+    await tx.wait();
+    //testar por evento cancelado
+    let eventTickets = await marketplace.getEventTickets(1);
+
+    expect(eventTickets.length).to.equal(9);
+  });
+
+  it("Should get event data", async function () {
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
+    await tx.wait();
+
+    let eventData = await marketplace.getEventData(1);
+
+    expect(eventData.length).to.equal(7);
+  });
+
+  it("Should get user's tickets", async function () {
+    const [owner, addr1] = await ethers.getSigners();
+
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
+    await tx.wait();
+
+    tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+    await tx.wait();
+
+    let userTickets = await marketplace.connect(addr1).getMyTickets();
+
+    expect(userTickets.length).to.equal(1);
+  });
+
+  it("Should get user's events", async function () {
+    const [owner, addr1] = await ethers.getSigners();
+
+    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
+    await tx.wait();
+
+    let userEvents = await marketplace.getMyEvents();
+
+    expect(userEvents.length).to.equal(1);
   });
 });

@@ -17,40 +17,42 @@ async function main() {
   const nft = await NFT.deploy(marketplace.address);
   await nft.deployed();
 
-  console.log("**** Creating Tickets");
+  console.log("Marketplace deployed to:", marketplace.address);
+  console.log("NFT deployed to:", nft.address);
+  // console.log("**** Creating Tickets");
 
-  let tx = await nft.createTickets(TOKEN_URI, TICKET_QUANTITY);
-  await tx.wait();
+  // let tx = await nft.createTickets(TOKEN_URI, TICKET_QUANTITY);
+  // await tx.wait();
 
-  console.log("**** Creating Ticket Market");
+  // console.log("**** Creating Ticket Market");
 
-  tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
-  await tx.wait();
+  // tx = await marketplace.createTicketMarket(nft.address, 15, 1, 10, EVENT_FINAL_TIME);
+  // await tx.wait();
 
-  console.log("**** Buying ticket");
+  // console.log("**** Buying ticket");
 
-  tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
-  await tx.wait();
+  // tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+  // await tx.wait();
 
-  console.log("**** Authorizing market to resell tickets");
+  // console.log("**** Authorizing market to resell tickets");
 
-  tx = await nft.connect(addr1).setApprovalForAll(marketplace.address, true);
-  await tx.wait();
+  // tx = await nft.connect(addr1).setApprovalForAll(marketplace.address, true);
+  // await tx.wait();
 
-  console.log("**** Reselling ticket");
+  // console.log("**** Reselling ticket");
 
-  tx = await marketplace.connect(addr1).resellTicket(15, 1);
-  await tx.wait();
+  // tx = await marketplace.connect(addr1).resellTicket(15, 1);
+  // await tx.wait();
 
-  console.log("**** Rebuying ticket");
+  // console.log("**** Rebuying ticket");
 
-  tx = await marketplace.connect(addr2).buyTicket(nft.address, 1, { value: 15}); 
-  await tx.wait();
+  // tx = await marketplace.connect(addr2).buyTicket(nft.address, 1, { value: 15}); 
+  // await tx.wait();
 
-  console.log("**** Using ticket");
+  // console.log("**** Using ticket");
 
-  tx = await marketplace.connect(addr2).useTicket(1);
-  await tx.wait();
+  // tx = await marketplace.connect(addr2).useTicket(1);
+  // await tx.wait();
 }
 
 main().catch((error) => {
