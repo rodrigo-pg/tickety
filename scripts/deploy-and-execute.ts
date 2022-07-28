@@ -17,6 +17,8 @@ async function main() {
   const nft = await NFT.deploy(marketplace.address);
   await nft.deployed();
 
+  await marketplace.setNftContract(nft.address);
+
   console.log("Marketplace deployed to:", marketplace.address);
   console.log("NFT deployed to:", nft.address);
   // console.log("**** Creating Tickets");

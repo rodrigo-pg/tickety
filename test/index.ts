@@ -8,24 +8,36 @@ import {
   TICKET_QUANTITY, 
   EVENT_FINAL_TIME,
   EVENT_NAME,
-  EVENT_DESCRIPTION
+  EVENT_DESCRIPTION,
+  TICKET_PRICE,
+  EVENT_IMAGE,
+  EVENT_BANNER
 } from "../utils/constants";
 
 describe("NFT", function () {
 
-  it("Should create all needed tickets", async function () {
+  let marketplace:Market;
+  let nft:NFT;
+
+  beforeEach(async () => {
     const Marketplace = await ethers.getContractFactory("Market");
-    const marketplace = await Marketplace.deploy();
+    marketplace = await Marketplace.deploy();
     await marketplace.deployed();
 
     const NFT = await ethers.getContractFactory("NFT");
-    const nft = await NFT.deploy(marketplace.address);
+    nft = await NFT.deploy(marketplace.address);
     await nft.deployed();
 
-    const tx = await nft.createTickets(TOKEN_URI, TICKET_QUANTITY);
+    marketplace.setNftContract(nft.address);
+  })
+
+  it("Should create all needed tickets", async function () {
+    const [owner] = await ethers.getSigners();
+
+    const tx = await nft.createTickets(TICKET_QUANTITY, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION, EVENT_IMAGE, EVENT_BANNER);
     await tx.wait();
 
-    expect(await nft.tokenURI(10)).to.equal(TOKEN_URI);
+    expect(await nft.ownerOf(10)).to.equal(owner.address);
   });
 });
 
@@ -43,46 +55,101 @@ describe("Market", function () {
     nft = await NFT.deploy(marketplace.address);
     await nft.deployed();
 
-    let tx = await nft.createTickets(TOKEN_URI, TICKET_QUANTITY);
-    await tx.wait();
+    marketplace.setNftContract(nft.address);
   })
 
-  it("Should create ticket market", async function () {
-    const tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
+  async function createEvent() {
+    let tx = await nft.createTickets(TICKET_QUANTITY, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION, EVENT_IMAGE, EVENT_BANNER);
     await tx.wait();
+  }
+
+  async function listEventTickets() {
+    const tx = await marketplace.createTicketMarket(1, TICKET_PRICE);
+    await tx.wait();
+  }
+
+  it("Only authorized entity should be allowed to create event", async function () {
+    const [owner] = await ethers.getSigners();
+
+    await expect(marketplace.createEvent(
+      TICKET_QUANTITY, 
+      EVENT_FINAL_TIME, 
+      EVENT_NAME, 
+      EVENT_DESCRIPTION, 
+      1, 
+      owner.address, 
+      EVENT_IMAGE, 
+      EVENT_BANNER
+    )).to.revertedWith("Not authorized to create");
+  });
+
+  it("Should list event's tickets", async function () {
+    await createEvent();
+
+    await listEventTickets();
 
     expect(await nft.ownerOf(10)).to.equal(marketplace.address);
+  });
+
+  it("Should not list an already listed event", async function () {
+    await createEvent();
+
+    await listEventTickets();
+
+    await expect(listEventTickets()).to.revertedWith("Event already listed");
   });
 
   it("Should buy ticket", async function () {
     const [owner, addr1] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
-    tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+    await listEventTickets();
+
+    const tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
     expect(await nft.ownerOf(1)).to.equal(addr1.address);
     
   });
 
-  it("Should resell a ticket", async function () {
-    const [owner, addr1, addr2] = await ethers.getSigners();
+  it("Creator Should not be allowed to buy a ticket", async function () {
+    const [owner, addr1] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
-    tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+    await listEventTickets();
+
+    let tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
     tx = await nft.connect(addr1).setApprovalForAll(marketplace.address, true);
     await tx.wait();
 
-    tx = await marketplace.connect(addr1).resellTicket(15, 1);
+    tx = await marketplace.connect(addr1).resellTicket(TICKET_PRICE, 1);
+    await tx.wait(); 
+
+    await expect(marketplace.buyTicket(1, { value: TICKET_PRICE})).to.be.revertedWith("Creator cannot be buyer");
+    
+  });
+
+  it("Should resell a ticket", async function () {
+    const [owner, addr1, addr2] = await ethers.getSigners();
+
+    await createEvent();
+
+    await listEventTickets();
+
+    let tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
-    tx = await marketplace.connect(addr2).buyTicket(nft.address, 1, { value: 15}); 
+    tx = await nft.connect(addr1).setApprovalForAll(marketplace.address, true);
+    await tx.wait();
+
+    tx = await marketplace.connect(addr1).resellTicket(TICKET_PRICE, 1);
+    await tx.wait();
+
+    tx = await marketplace.connect(addr2).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
     expect(await nft.ownerOf(1)).to.equal(addr2.address);
@@ -91,10 +158,11 @@ describe("Market", function () {
   it("Should not resell an used ticket", async function () {
     const [owner, addr1, addr2] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 1, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
-    tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+    await listEventTickets();
+
+    let tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
     tx = await marketplace.useTicket(1);
@@ -103,27 +171,90 @@ describe("Market", function () {
     tx = await nft.connect(addr1).setApprovalForAll(marketplace.address, true);
     await tx.wait();
 
-    await expect(marketplace.connect(addr1).resellTicket(15, 1)).to.be.revertedWith("Ticket already used");
+    await expect(marketplace.connect(addr1).resellTicket(TICKET_PRICE, 1)).to.be.revertedWith("Ticket already used");
   });
 
   it("Should not resell a not owned ticket", async function () {
     const [owner, addr1, addr2] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
-    tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+    await listEventTickets();
+
+    let tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
     tx = await nft.connect(addr2).setApprovalForAll(marketplace.address, true);
     await tx.wait();
 
-    await expect(marketplace.connect(addr2).resellTicket(15, 1)).to.be.revertedWith("Not owner of ticket");
+    await expect(marketplace.connect(addr2).resellTicket(TICKET_PRICE, 1)).to.be.revertedWith("Not owner of ticket");
+  });
+
+  it("Should cancel a ticket listing", async function () {
+    const [owner, addr1] = await ethers.getSigners();
+
+    await createEvent();
+
+    await listEventTickets();
+
+    let tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
+    await tx.wait();
+
+    tx = await nft.connect(addr1).setApprovalForAll(marketplace.address, true);
+    await tx.wait();
+
+    tx = await marketplace.connect(addr1).resellTicket(TICKET_PRICE, 1);
+    await tx.wait();
+
+    expect(await nft.ownerOf(1)).to.equal(marketplace.address);
+
+    tx = await marketplace.connect(addr1).cancelTicketListing(1); 
+    await tx.wait();
+
+    expect(await nft.ownerOf(1)).to.equal(addr1.address);
+  });
+
+  it("Only seller should cancel a ticket listing", async function () {
+    const [owner, addr1, addr2] = await ethers.getSigners();
+
+    await createEvent();
+
+    await listEventTickets();
+
+    let tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
+    await tx.wait();
+
+    tx = await nft.connect(addr1).setApprovalForAll(marketplace.address, true);
+    await tx.wait();
+
+    tx = await marketplace.connect(addr1).resellTicket(TICKET_PRICE, 1);
+    await tx.wait();
+
+    await expect(marketplace.connect(addr2).cancelTicketListing(1)).to.revertedWith("Only seller can cancel");
+
+  });
+
+  it("Should only cancel listed tickets", async function () {
+    const [owner, addr1] = await ethers.getSigners();
+
+    await createEvent();
+
+    await listEventTickets();
+
+    let tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
+    await tx.wait();
+
+    tx = await nft.connect(addr1).setApprovalForAll(marketplace.address, true);
+    await tx.wait();
+
+    await expect(marketplace.connect(addr1).cancelTicketListing(1)).to.revertedWith("Not listed ticket");
+
   });
 
   it("Should not use an unbought ticket", async function () {
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
+
+    await listEventTickets();
 
     await expect(marketplace.useTicket(1)).to.be.revertedWith("Ticket not bought yet");
   });
@@ -131,10 +262,11 @@ describe("Market", function () {
   it("Ticket should not be used by third parties", async function () {
     const [owner, addr1, addr2] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
-    tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+    await listEventTickets();
+
+    const tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
     await expect(marketplace.connect(addr2).useTicket(1)).to.be.revertedWith("Not allowed to use ticket");
@@ -143,10 +275,11 @@ describe("Market", function () {
   it("Should not use an already used ticket", async function () {
     const [owner, addr1] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
-    tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+    await listEventTickets();
+
+    let tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
     tx = await marketplace.connect(addr1).useTicket(1);
@@ -158,40 +291,73 @@ describe("Market", function () {
   it("Should cancel ticket market", async function () {
     const [owner] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
-    tx = await marketplace.cancelTicketMarket(1, 10);
+    await listEventTickets();
+
+    const tx = await marketplace.cancelTicketMarket(1);
     await tx.wait();
 
     expect(await nft.ownerOf(10)).to.equal(owner.address);
   });
 
+  it("Should not cancel ticket market with sale", async function () {
+    const [owner, addr1] = await ethers.getSigners();
+
+    await createEvent();
+
+    await listEventTickets();
+
+    const tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE});
+    tx.wait();
+
+    await expect(marketplace.cancelTicketMarket(1)).to.be.revertedWith("Event has already sold tickets");
+  });
+
+  it("Should not cancel unlisted ticket market", async function () {
+    await createEvent();
+
+    await expect(marketplace.cancelTicketMarket(1)).to.be.revertedWith("Event not listed");
+  });
+
+  it("Only event creator should be allowed to cancel", async function () {
+    const [owner, addr1] = await ethers.getSigners();
+
+    await createEvent();
+
+    await listEventTickets();
+
+    await expect(marketplace.connect(addr1).cancelTicketMarket(1)).to.be.revertedWith("Not event creator");
+  });
+
   it("Should get event tickets", async function () {
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
-    //testar por evento cancelado
+    await createEvent();
+
+    await listEventTickets();
+
     let eventTickets = await marketplace.getEventTickets(1);
 
-    expect(eventTickets.length).to.equal(9);
+    expect(eventTickets.length).to.equal(10);
   });
 
   it("Should get event data", async function () {
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
+
+    await listEventTickets();
 
     let eventData = await marketplace.getEventData(1);
 
-    expect(eventData.length).to.equal(7);
+    expect(eventData.length).to.equal(10);
   });
 
   it("Should get user's tickets", async function () {
     const [owner, addr1] = await ethers.getSigners();
 
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
-    tx = await marketplace.connect(addr1).buyTicket(nft.address, 1, { value: 15}); 
+    await listEventTickets();
+
+    const tx = await marketplace.connect(addr1).buyTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
     let userTickets = await marketplace.connect(addr1).getMyTickets();
@@ -200,10 +366,7 @@ describe("Market", function () {
   });
 
   it("Should get user's events", async function () {
-    const [owner, addr1] = await ethers.getSigners();
-
-    let tx = await marketplace.createTicketMarket(nft.address, 15, 10, EVENT_FINAL_TIME, EVENT_NAME, EVENT_DESCRIPTION);
-    await tx.wait();
+    await createEvent();
 
     let userEvents = await marketplace.getMyEvents();
 
