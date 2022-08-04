@@ -5,23 +5,22 @@ import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "./NFT.sol";
 
 contract Market is ReentrancyGuard, Ownable {
     using Counters for Counters.Counter;
-    Counters.Counter private _itemIds;
+    using SafeMath for uint;
+
     Counters.Counter private _eventIds;
+    Counters.Counter private _itemIds;
     address private nftContract;
 
-    enum ListingStatus {
-	    Active,
-	    Sold,
-	    Cancelled
-	  }
-
-    enum EventListingStatus {
+    enum Status {
       Created,
       Listed,
+      Sold,
       Cancelled
     }
 
@@ -32,25 +31,23 @@ contract Market is ReentrancyGuard, Ownable {
       address payable creator;
       uint256 eventFinalTime;
       uint256 ticketsQuantity;
-      uint256 initialItemId;
-      EventListingStatus status;
+      Status status;
       string eventImage;
       string eventBanner;
+      uint baseTicketPrice;
+      uint ticketsAvailable;
     }
 
     struct MarketItem {
       uint itemId;
       uint eventId;
-      address nftContract;
-      uint256 tokenId;
       address payable seller;
       address payable owner;
       uint256 price;
       bool used;
-      ListingStatus status;
+      Status status;
     }
 
-    //Cada evento deveria mapear para outro map de tokens
     mapping(uint256 => Event) private idToEvents;
     mapping(uint256 => MarketItem) private idToMarketItem;
 
@@ -59,31 +56,29 @@ contract Market is ReentrancyGuard, Ownable {
     }
 
     function createEvent(
-        uint ticketQuantity,
+        uint ticketsQuantity,
         uint256 eventFinalTime,
         string memory eventName,
         string memory eventDescription,
-        uint initialTokenId,
-        address creator,
         string memory eventImage,
         string memory eventBanner
     ) external nonReentrant {
-      require(msg.sender == nftContract, "Not authorized to create");
       _eventIds.increment();
 
       uint eventId = _eventIds.current();
 
       idToEvents[eventId] = Event(
-          eventId,
-          eventName,
-          eventDescription,
-          payable(creator),
-          eventFinalTime,
-          ticketQuantity,
-          initialTokenId,
-          EventListingStatus.Created,
-          eventImage,
-          eventBanner
+        eventId,
+        eventName,
+        eventDescription,
+        payable(msg.sender),
+        eventFinalTime,
+        ticketsQuantity,
+        Status.Created,
+        eventImage,
+        eventBanner,
+        0,
+        0
       );
     }
 
@@ -96,136 +91,126 @@ contract Market is ReentrancyGuard, Ownable {
       Event storage eventData = idToEvents[eventId];
 
       require(msg.sender == eventData.creator, "Not event creator");
-      require(eventData.status != EventListingStatus.Listed, "Event already listed");
+      require(eventData.status != Status.Listed, "Event already listed");
       require(block.timestamp < eventData.eventFinalTime, "Event already finished");
 
-      uint initialTicketId = eventData.initialItemId;
-      uint finalTickedId = initialTicketId + eventData.ticketsQuantity - 1;
-
-      for (uint currentTokenId = initialTicketId; currentTokenId <= finalTickedId; currentTokenId++) {
-          _itemIds.increment();
-          uint256 itemId = _itemIds.current();
-
-          idToMarketItem[itemId] = MarketItem(
-            itemId,
-            eventId,
-            nftContract,
-            currentTokenId,
-            payable(msg.sender),
-            payable(address(0)),
-            price,
-            false,
-            ListingStatus.Active
-          );
-
-          IERC721(nftContract).transferFrom(msg.sender, address(this), currentTokenId);
-      }
-
-      eventData.status = EventListingStatus.Listed;
+      eventData.baseTicketPrice = price;
+      eventData.ticketsAvailable = eventData.ticketsQuantity;
+      eventData.status = Status.Listed;
     }
 
-    function cancelTicketMarket(uint eventId) public nonReentrant {
-      bool hasBoughtTickets = false;
+    function cancelTicketMarket(uint eventId) public {
       Event storage eventData = idToEvents[eventId];
 
-      require(eventData.status == EventListingStatus.Listed, "Event not listed");
+      require(eventData.status == Status.Listed, "Event not listed");
       require(msg.sender == eventData.creator, "Not event creator");
+      require(eventData.ticketsQuantity == eventData.ticketsAvailable, "Event has already sold tickets");
 
-      for (uint index = 1; index <= _itemIds.current(); index++) {
-        MarketItem storage item = idToMarketItem[index];
-
-        if (item.eventId == eventId && (item.seller != eventData.creator || item.owner != address(0))) {
-          hasBoughtTickets = true;
-        }
-      }
-
-      require(hasBoughtTickets == false, "Event has already sold tickets");
-
-      for (uint index = 1; index <= _itemIds.current(); index++) {
-        MarketItem storage item = idToMarketItem[index];
-
-        if (item.eventId == eventId) {
-		      item.status = ListingStatus.Cancelled;
-
-		      IERC721(item.nftContract).transferFrom(address(this), eventData.creator, item.tokenId);
-        }
-      }
-
-      eventData.status = EventListingStatus.Cancelled;
+      eventData.ticketsAvailable = 0;
+      eventData.status = Status.Cancelled;
 	  }
+
+    function buyEventTicket(
+    uint256 eventId
+    ) public payable nonReentrant {
+      Event storage eventData = idToEvents[eventId];
+      uint eventFinalTime = eventData.eventFinalTime;
+
+      require(msg.sender != eventData.creator, "Creator cannot be buyer");
+      require(msg.value >= eventData.baseTicketPrice, "Insufficient payment");
+      require(eventData.status == Status.Listed, "Event not listed");
+      require(block.timestamp < eventFinalTime, "Event finished");
+      require(eventData.ticketsAvailable > 0, "No tickets available");
+
+      _itemIds.increment();
+      uint itemId = _itemIds.current();
+
+      idToMarketItem[itemId] = MarketItem(
+          itemId,
+          eventId,
+          payable(address(0)),
+          payable(msg.sender),
+          0,
+          false,
+          Status.Sold
+      );
+      
+      eventData.ticketsAvailable = eventData.ticketsAvailable.sub(1);
+
+      payable(owner()).transfer(msg.value.div(100));
+      eventData.creator.transfer(msg.value.div(100));
+      idToMarketItem[itemId].seller.transfer(msg.value.sub(msg.value.div(100)));
+
+      NFT(nftContract).mintTicket(itemId, eventData.creator, msg.sender);
+      IERC721(nftContract).transferFrom(eventData.creator, msg.sender, itemId);
+    }
 
     function buyTicket(
     uint256 itemId
     ) public payable nonReentrant {
       uint price = idToMarketItem[itemId].price;
-      uint tokenId = idToMarketItem[itemId].tokenId;
-      Event memory eventData = idToEvents[idToMarketItem[itemId].eventId];
+      uint eventId = idToMarketItem[itemId].eventId;
+      Event memory eventData = idToEvents[eventId];
       uint eventFinalTime = eventData.eventFinalTime;
 
       require(msg.sender != idToMarketItem[itemId].seller, "Seller cannot be buyer");
       require(msg.sender != eventData.creator, "Creator cannot be buyer");
       require(msg.value >= price, "Insufficient payment");
-      require(idToMarketItem[itemId].status == ListingStatus.Active, "Listing is not active");
+      require(eventData.status == Status.Listed, "Event not listed");
+      require(idToMarketItem[itemId].status == Status.Listed, "Listing is not active");
       require(block.timestamp < eventFinalTime, "Event finished");
       require(idToMarketItem[itemId].used == false, "Ticket already used");
 
       idToMarketItem[itemId].owner = payable(msg.sender);
-      idToMarketItem[itemId].status = ListingStatus.Sold;
+      idToMarketItem[itemId].status = Status.Sold;
 
-      payable(owner()).transfer(msg.value / 100);
+      payable(owner()).transfer(msg.value.div(100));
 
-      address payable eventCreator = idToEvents[idToMarketItem[itemId].eventId].creator;
-      
-      if (idToMarketItem[itemId].seller != eventCreator) {
-        eventCreator.transfer(msg.value / 100);
-        idToMarketItem[itemId].seller.transfer(msg.value - (msg.value / 50));
-      } else {
-        idToMarketItem[itemId].seller.transfer(msg.value - (msg.value / 100));
-      }
-
-      IERC721(nftContract).transferFrom(address(this), msg.sender, tokenId);
+      eventData.creator.transfer(msg.value.div(100));
+      idToMarketItem[itemId].seller.transfer(msg.value.sub(msg.value.div(50)));
+      IERC721(nftContract).transferFrom(address(this), msg.sender, itemId);
     } 
 
     function resellTicket(uint256 price, uint256 itemId) public {
       bool isUsed = idToMarketItem[itemId].used;
-      uint eventFinalTime = idToEvents[idToMarketItem[itemId].eventId].eventFinalTime;
+      uint eventId = idToMarketItem[itemId].eventId;
+      Event memory eventData = idToEvents[eventId];
 
       require(isUsed == false, "Ticket already used");
       require(idToMarketItem[itemId].owner == msg.sender, "Not owner of ticket");
-      require(block.timestamp < eventFinalTime, "Event finished");
+      require(block.timestamp < eventData.eventFinalTime, "Event finished");
 
       idToMarketItem[itemId] = MarketItem(
         itemId,
         idToMarketItem[itemId].eventId,
-        idToMarketItem[itemId].nftContract,
-        idToMarketItem[itemId].tokenId,
         payable(msg.sender),
         payable(address(0)),
         price,
         false,
-        ListingStatus.Active
+        Status.Listed
       );
 
-      IERC721(idToMarketItem[itemId].nftContract).transferFrom(msg.sender, address(this), idToMarketItem[itemId].tokenId);  
+      NFT(nftContract).transferFrom(msg.sender, address(this), itemId);  
     }
 
     function cancelTicketListing(uint itemId) public nonReentrant {
       MarketItem storage itemData = idToMarketItem[itemId];
-      Event memory eventData = idToEvents[idToMarketItem[itemId].eventId];
 
-      require(itemData.status == ListingStatus.Active, "Not listed ticket");
+      require(itemData.status == Status.Listed, "Not listed ticket");
       require(itemData.seller == msg.sender, "Only seller can cancel");
 
-      itemData.status = ListingStatus.Cancelled;
+      itemData.status = Status.Cancelled;
 
-      IERC721(idToMarketItem[itemId].nftContract).transferFrom(address(this), msg.sender, idToMarketItem[itemId].tokenId);  
+      NFT(nftContract).transferFrom(address(this), msg.sender, itemId);  
     }
 
     function useTicket(uint256 itemId) external {
-      address eventCreator = idToEvents[idToMarketItem[itemId].eventId].creator;
+      uint eventId = idToMarketItem[itemId].eventId;
+      Event memory eventData = idToEvents[eventId];
+      address eventCreator = eventData.creator;
       address owner = idToMarketItem[itemId].owner;
       bool isUsed = idToMarketItem[itemId].used;
-      uint eventFinalTime = idToEvents[idToMarketItem[itemId].eventId].eventFinalTime;
+      uint eventFinalTime = eventData.eventFinalTime;
 
       require(owner != address(0), "Ticket not bought yet");
       require(msg.sender == eventCreator || msg.sender == owner, "Not allowed to use ticket");
@@ -240,13 +225,18 @@ contract Market is ReentrancyGuard, Ownable {
     }
 
     function getEventTickets(uint256 eventId) external view returns (MarketItem[] memory) {
-      Event memory eventData = idToEvents[eventId];
-      MarketItem[] memory tickets = new MarketItem[](eventData.ticketsQuantity);
-      uint currentTicketQuantity = 0;
-      for (uint256 index = 1; index < _itemIds.current(); index++) {
-        if (idToMarketItem[index].eventId == eventId) {
-          tickets[currentTicketQuantity] = idToMarketItem[index];
-          currentTicketQuantity++;
+      uint ticketsQuantity = 0;
+      for (uint256 index = 0; index < _itemIds.current(); index++) {
+        MarketItem memory item = idToMarketItem[index + 1];
+        if (item.eventId == eventId) {
+          ticketsQuantity++;
+        }
+      }
+      MarketItem[] memory tickets = new MarketItem[](ticketsQuantity);
+      for (uint256 index = 0; index < _itemIds.current(); index++) {
+        MarketItem memory item = idToMarketItem[index + 1];
+        if (item.eventId == eventId) {
+          tickets[index] = item;
         }
       }
       return tickets;

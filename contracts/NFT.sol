@@ -3,47 +3,21 @@ pragma solidity ^0.8.3;
 
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "./Market.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract NFT is ERC721URIStorage {
+contract NFT is ERC721 {
 
-    using Counters for Counters.Counter;
-    Counters.Counter private _tokenIds;
     address public marketPlaceAddress;
 
-    constructor(address marketAddress) ERC721("TicketMarket", "TTM") {
+    constructor(address marketAddress) ERC721("Tickets", "TYT") {
         marketPlaceAddress = marketAddress;
     }   
 
-    function createTickets(
-        uint ticketQuantity,
-        uint256 eventFinalTime,
-        string memory eventName,
-        string memory eventDescription,
-        string memory eventImage,
-        string memory eventBanner
-    ) public returns (uint) {
-        _tokenIds.increment();
-
-        Market(marketPlaceAddress).createEvent(
-          ticketQuantity, 
-          eventFinalTime, 
-          eventName, 
-          eventDescription, 
-          _tokenIds.current(),
-          msg.sender,
-          eventImage,
-          eventBanner
-        );
-
-        for (uint256 index = 0; index < ticketQuantity; index++) {
-            uint256 newItemId = _tokenIds.current();
-            _mint(msg.sender, newItemId);
-            _tokenIds.increment();
-        }
-
-        setApprovalForAll(marketPlaceAddress, true);
-        return _tokenIds.current();
+    function mintTicket(uint itemId, address seller, address buyer) external {
+        require(msg.sender == marketPlaceAddress, "Not authorized to mint");
+        _mint(seller, itemId);
+        _setApprovalForAll(seller, marketPlaceAddress, true);
+        _setApprovalForAll(buyer, marketPlaceAddress, true);
     }
+
 }
