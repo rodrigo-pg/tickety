@@ -1,5 +1,6 @@
+import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, upgrades } from "hardhat";
 import { beforeEach } from "mocha";
 import { Market } from "../typechain/Market";
 import { NFT } from "../typechain/NFT";
@@ -10,7 +11,9 @@ import {
   EVENT_DESCRIPTION,
   TICKET_PRICE,
   EVENT_IMAGE,
-  EVENT_BANNER
+  EVENT_BANNER,
+  LOCATION,
+  EVENT_START_TIME
 } from "../utils/constants";
 
 describe("NFT", function () {
@@ -20,10 +23,12 @@ describe("NFT", function () {
 
   beforeEach(async () => {
     const Marketplace = await ethers.getContractFactory("Market");
+    //marketplace = (await upgrades.deployProxy(Marketplace, { initializer: "store" })) as Market;
     marketplace = await Marketplace.deploy();
     await marketplace.deployed();
 
     const NFT = await ethers.getContractFactory("NFT");
+    //nft = (await upgrades.deployProxy(NFT, [marketplace.address], { initializer: "store" })) as NFT;
     nft = await NFT.deploy(marketplace.address);
     await nft.deployed();
 
@@ -58,10 +63,12 @@ describe("Market", function () {
     let tx = await marketplace.createEvent(
       TICKET_QUANTITY, 
       EVENT_FINAL_TIME, 
+      EVENT_START_TIME,
       EVENT_NAME, 
       EVENT_DESCRIPTION, 
       EVENT_IMAGE, 
-      EVENT_BANNER
+      EVENT_BANNER,
+      LOCATION
     );
     await tx.wait();
   }
@@ -69,6 +76,27 @@ describe("Market", function () {
   async function listEventTickets() {
     const tx = await marketplace.createTicketMarket(1, TICKET_PRICE);
     await tx.wait();
+  }
+
+  async function generateEntrance(signer: SignerWithAddress, ticketId: number) {
+    const domain = {
+      name: 'TicketyMarket',
+      version: '1',
+      chainId: await signer.getChainId(),
+      verifyingContract: marketplace.address
+    };
+
+    const types = {
+      Ticket: [
+        { name: "id", type: "uint256" }
+      ] 
+    };
+
+    const ticket = {
+      id: ticketId
+    };
+
+    return await signer._signTypedData(domain, types, ticket);
   }
 
   it("Should list event's tickets", async function () {
@@ -197,7 +225,9 @@ describe("Market", function () {
     let tx = await marketplace.connect(addr1).buyEventTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
-    tx = await marketplace.useTicket(1);
+    const entrance = await generateEntrance(addr1, 1);
+
+    tx = await marketplace.useTicket(1, entrance);
     await tx.wait();
 
     await expect(marketplace.connect(addr1).resellTicket(TICKET_PRICE, 1)).to.be.revertedWith("Ticket already used");
@@ -330,11 +360,15 @@ describe("Market", function () {
   });
 
   it("Should not use an unbought ticket", async function () {
+    const [owner, addr1] = await ethers.getSigners();
+
     await createEvent();
 
     await listEventTickets();
 
-    await expect(marketplace.useTicket(1)).to.be.revertedWith("Ticket not bought yet");
+    const entrance = await generateEntrance(addr1, 1);
+
+    await expect(marketplace.useTicket(1, entrance)).to.be.revertedWith("Ticket not bought yet");
   });
 
   it("Ticket should not be used by third parties", async function () {
@@ -347,7 +381,9 @@ describe("Market", function () {
     const tx = await marketplace.connect(addr1).buyEventTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
-    await expect(marketplace.connect(addr2).useTicket(1)).to.be.revertedWith("Not allowed to use ticket");
+    const entrance = await generateEntrance(addr1, 1);
+
+    await expect(marketplace.connect(addr2).useTicket(1, entrance)).to.be.revertedWith("Not allowed to use ticket");
   });
 
   it("Should not use an already used ticket", async function () {
@@ -360,10 +396,12 @@ describe("Market", function () {
     let tx = await marketplace.connect(addr1).buyEventTicket(1, { value: TICKET_PRICE}); 
     await tx.wait();
 
-    tx = await marketplace.connect(addr1).useTicket(1);
+    const entrance = await generateEntrance(addr1, 1);
+
+    tx = await marketplace.useTicket(1, entrance);
     await tx.wait();
 
-    await expect(marketplace.connect(addr1).useTicket(1)).to.be.revertedWith("Ticket already used");
+    await expect(marketplace.useTicket(1, entrance)).to.be.revertedWith("Ticket already used");
   });
 
   it("Should cancel ticket market", async function () {
@@ -432,7 +470,7 @@ describe("Market", function () {
 
     let eventData = await marketplace.getEventData(1);
 
-    expect(eventData.length).to.equal(11);
+    expect(eventData.length).to.equal(13);
   });
 
   it("Should get user's tickets", async function () {
@@ -454,6 +492,8 @@ describe("Market", function () {
     await createEvent();
 
     let userEvents = await marketplace.getMyEvents();
+
+    console.log(userEvents)
 
     expect(userEvents.length).to.equal(1);
   });
