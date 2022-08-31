@@ -1,4 +1,4 @@
-# Tickety
+# 💻 Tickety
 
 The goal of tickety is to create a market around 
 event's tickets by the reselling of tickets between
